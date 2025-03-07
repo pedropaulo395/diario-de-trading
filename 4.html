@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diário de Trading</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
+        .container { display: grid; grid-template-columns: 3fr 2fr; gap: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+        th { background-color: #f5f5f5; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; }
+        .form-group input, .form-group select { width: 100%; padding: 8px; box-sizing: border-box; }
+        .balance { font-size: 1.5em; margin: 20px 0; padding: 10px; background: #e8f4e8; border-radius: 5px; }
+        .chart-container { position: relative; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .btn-delete { background: #ff4444; color: white; border: none; padding: 5px 10px; cursor: pointer; }
+        .positive { color: #4CAF50; }
+        .negative { color: #FF5252; }
+        .meta-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 1.5em; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Diário de Trading</h1>
+    
+    <div class="meta-section">
+        <div class="form-group">
+            <label>Meta Fixa ($):</label>
+            <input type="number" step="0.01" id="metaFixaInput" placeholder="Ex: 1000.00">
+            <button onclick="atualizarMeta()">Definir Meta</button>
+        </div>
+    </div>
+
+    <div class="initial-balance">
+        <div class="form-group">
+            <label>Saldo Inicial ($):</label>
+            <input type="number" step="0.01" id="novoSaldoInicial" placeholder="Novo saldo inicial">
+            <button onclick="atualizarSaldoInicial()">Atualizar Saldo</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div>
+            <div class="form-group">
+                <label>Data:</label>
+                <input type="date" id="data" required>
+            </div>
+            <div class="form-group">
+                <label>Resultado:</label>
+                <select id="resultado" required>
+                    <option value="gain">Gain</option>
+                    <option value="loss">Loss</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Ativo:</label>
+                <input type="text" id="ativo" required>
+            </div>
+            <div class="form-group">
+                <label>Estratégia:</label>
+                <input type="text" id="estrategia" required>
+            </div>
+            <div class="form-group">
+                <label>L/P ($):</label>
+                <input type="number" step="0.01" id="payoff" required>
+            </div>
+            <button onclick="adicionarEntrada()">Adicionar Operação</button>
+            
+            <div class="balance" id="balance">Saldo Inicial: $5000.00</div>
+            
+            <table id="tabela">
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Resultado</th>
+                        <th>Ativo</th>
+                        <th>Estratégia</th>
+                        <th>L/P</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div>
+            <!-- Gráfico de Meta -->
+            <div class="chart-container">
+                <h3>Progresso da Meta</h3>
+                <div class="meta-label" id="metaPercentage">0%</div>
+                <canvas id="chartMeta"></canvas>
+            </div>
+
+            <!-- Gráfico de Saldo -->
+            <div class="chart-container">
+                <h3>Evolução do Saldo</h3>
+                <canvas id="chartSaldo"></canvas>
+            </div>
+
+            <!-- Gráfico de Estratégias -->
+            <div class="chart-container">
+                <h3>Distribuição de Estratégias</h3>
+                <canvas id="chartEstrategias"></canvas>
+            </div>
+
+            <!-- Gráfico Semanal -->
+            <div class="chart-container">
+                <h3>Evolução Semanal</h3>
+                <div class="week-selector">
+                    <label>Semana:</label>
+                    <select id="semanaSelecionada"></select>
+                </div>
+                <canvas id="chartSemanal"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Variáveis principais
+        let saldoInicial = parseFloat(localStorage.getItem('saldoInicial')) || 5000;
+        let metaFixa = parseFloat(localStorage.getItem('metaFixa')) || 0;
+        let entradas = JSON.parse(localStorage.getItem('entradas')) || [];
+        let saldoAtual = parseFloat(localStorage.getItem('saldoAtual')) || saldoInicial;
+        let strategies = {};
+
+        // Contextos dos gráficos
+        const ctxSaldo = document.getElementById('chartSaldo').getContext('2d');
+        const ctxEstrategias = document.getElementById('chartEstrategias').getContext('2d');
+        const ctxSemanal = document.getElementById('chartSemanal').getContext('2d');
+        const ctxMeta = document.getElementById('chartMeta').getContext('2d');
+
+        // Gráfico de Saldo
+        const chartSaldo = new Chart(ctxSaldo, {
+            type: 'line',
+            data: {
+                labels: ['Inicial'],
+                datasets: [{
+                    label: 'Saldo ($)',
+                    data: [saldoInicial],
+                    borderColor: '#3cba9f',
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // Gráfico de Estratégias
+        const chartEstrategias = new Chart(ctxEstrategias, {
+            type: 'pie',
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    backgroundColor: ['#3cba9f', '#ffcc00', '#ff6b6b', '#45b7d1', '#96ce7c']
+                }]
+            }
+        });
+
+        // Gráfico Semanal
+        const chartSemanal = new Chart(ctxSemanal, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'L/P Diário',
+                    data: [],
+                    backgroundColor: []
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+
+        // Gráfico de Meta
+        const chartMeta = new Chart(ctxMeta, {
+            type: 'doughnut',
+            data: {
+                labels: ['Progresso', 'Restante'],
+                datasets: [{
+                    data: [0, 100],
+                    backgroundColor: ['#4CAF50', '#e0e0e0'],
+                    cutout: '70%'
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (context) => {
+                                if (context.label === 'Progresso') {
+                                    const progresso = ((saldoAtual - saldoInicial) / metaFixa * 100).toFixed(1);
+                                    return `Meta: ${progresso}%`;
+                                }
+                                return context.label;
+                            }
+                        }
+                    }
+                }
+            },
+            plugins: [{
+                id: 'textCenter',
+                beforeDraw: (chart) => {
+                    if (metaFixa <= 0) return;
+
+                    const ctx = chart.ctx;
+                    ctx.save();
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.font = 'bold 20px Arial';
+
+                    const lucroTotal = saldoAtual - saldoInicial;
+                    const progresso = Math.min((lucroTotal / metaFixa) * 100, 100);
+                    const restante = Math.max(100 - progresso, 0);
+
+                    const percentageElement = document.getElementById('metaPercentage');
+                    percentageElement.textContent = `${progresso.toFixed(1)}%`;
+                    percentageElement.style.color = progresso >= 0 ? '#4CAF50' : '#FF5252';
+
+                    ctx.fillText(`${progresso.toFixed(1)}%`, chart.width / 2, chart.height / 2);
+                    ctx.restore();
+                }
+            }]
+        });
+
+        // Função principal de inicialização
+        function init() {
+            // Carrega dados do localStorage
+            saldoInicial = parseFloat(localStorage.getItem('saldoInicial')) || 5000;
+            metaFixa = parseFloat(localStorage.getItem('metaFixa')) || 0;
+            entradas = JSON.parse(localStorage.getItem('entradas')) || [];
+            saldoAtual = parseFloat(localStorage.getItem('saldoAtual')) || saldoInicial;
+
+            // Atualiza componentes
+            atualizarSaldo();
+            atualizarTabela();
+            atualizarGraficos();
+            atualizarGraficoMeta();
+            atualizarSelecaoSemanas();
+
+            // Event listener para seleção de semana
+            document.getElementById('semanaSelecionada').addEventListener('change', (e) => {
+                atualizarGraficoSemanal(parseInt(e.target.value));
+            });
+        }
+
+        // Atualiza o saldo exibido
+        function atualizarSaldo() {
+            document.getElementById('balance').innerHTML = `
+                Saldo Atual: $${saldoAtual.toFixed(2)}<br>
+                Meta: $${metaFixa.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            `;
+        }
+
+        // Atualiza tabela de operações
+        function atualizarTabela() {
+            const tbody = document.querySelector('#tabela tbody');
+            tbody.innerHTML = '';
+
+            entradas.forEach((e, index) => {
+                const payoff = parseFloat(e.payoff);
+                const classe = payoff >= 0 ? 'positive' : 'negative';
+                const valor = payoff >= 0 ? `+${payoff.toFixed(2)}` : payoff.toFixed(2);
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${formatDate(e.data)}</td>
+                    <td>${e.resultado}</td>
+                    <td>${e.ativo}</td>
+                    <td>${e.estrategia}</td>
+                    <td class="${classe}">${valor}</td>
+                    <td><button class="btn-delete" onclick="deleteEntrada(${index})">Apagar</button></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Agrupa operações por dia
+        function groupEntriesByDate() {
+            const grouped = {};
+            entradas.forEach(entry => {
+                if (!grouped[entry.data]) {
+                    grouped[entry.data] = 0;
+                }
+                grouped[entry.data] += parseFloat(entry.payoff);
+            });
+            return Object.keys(grouped).sort().map(date => ({
+                date,
+                total: grouped[date].toFixed(2)
+            }));
+        }
+
+        // Formata data para DD/MM
+        function formatDate(dateString) {
+            const [year, month, day] = dateString.split('-');
+            return `${day.padStart(2, '0')}/${month.padStart(2, '0')}`;
+        }
+
+        // Atualiza seleção de semanas
+        function atualizarSelecaoSemanas() {
+            const grouped = groupEntriesByDate();
+            const totalWeeks = Math.ceil(grouped.length / 5);
+            const select = document.getElementById('semanaSelecionada');
+            select.innerHTML = '';
+
+            for (let i = 1; i <= totalWeeks; i++) {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = `Semana ${i}`;
+                select.appendChild(option);
+            }
+
+            if (totalWeeks === 0) {
+                select.innerHTML = '<option value="1">Semana 1</option>';
+            }
+        }
+
+        // Atualiza todos os gráficos
+        function atualizarGraficos() {
+            // Atualiza gráfico de saldo
+            chartSaldo.data.labels = ['Inicial', ...entradas.map(e => formatDate(e.data))];
+            chartSaldo.data.datasets[0].data = [saldoInicial];
+            let saldoTemp = saldoInicial;
+            entradas.forEach(e => {
+                saldoTemp += parseFloat(e.payoff);
+                chartSaldo.data.datasets[0].data.push(saldoTemp);
+            });
+            chartSaldo.update();
+
+            // Atualiza gráfico de estratégias
+            strategies = {};
+            entradas.forEach(e => {
+                strategies[e.estrategia] = (strategies[e.estrategia] || 0) + 1;
+            });
+            chartEstrategias.data.labels = Object.keys(strategies);
+            chartEstrategias.data.datasets[0].data = Object.values(strategies);
+            chartEstrategias.update();
+
+            // Atualiza gráfico semanal
+            const semanaSelecionada = parseInt(document.getElementById('semanaSelecionada').value) || 1;
+            atualizarGraficoSemanal(semanaSelecionada);
+
+            // Atualiza gráfico de meta
+            atualizarGraficoMeta();
+        }
+
+        // Atualiza gráfico semanal específico
+        function atualizarGraficoSemanal(semana) {
+            const grouped = groupEntriesByDate();
+            const inicio = (semana - 1) * 5;
+            const entradasSemana = grouped.slice(inicio, inicio + 5);
+
+            // Prepara dados
+            const labels = entradasSemana.map(e => formatDate(e.date));
+            const data = entradasSemana.map(e => e.total);
+            const cores = data.map(v => v >= 0 ? '#4CAF50' : '#FF5252');
+
+            // Atualiza gráfico
+            chartSemanal.data.labels = labels;
+            chartSemanal.data.datasets[0] = {
+                label: 'L/P Diário',
+                data: data.map(v => parseFloat(v)),
+                backgroundColor: cores
+            };
+            chartSemanal.update();
+        }
+
+        // Atualiza gráfico de meta
+        function atualizarGraficoMeta() {
+            if (metaFixa <= 0) {
+                chartMeta.data.datasets[0].data = [0, 100];
+                chartMeta.data.labels = ['Meta não definida', ''];
+                chartMeta.update();
+                return;
+            }
+
+            const lucroTotal = saldoAtual - saldoInicial;
+            const progresso = Math.min((lucroTotal / metaFixa) * 100, 100);
+            const restante = Math.max(100 - progresso, 0);
+
+            const progressoColor = progresso >= 0 ? '#4CAF50' : '#FF5252';
+            chartMeta.data.datasets[0].data = [Math.abs(progresso), restante];
+            chartMeta.data.datasets[0].backgroundColor = [progressoColor, '#e0e0e0'];
+            chartMeta.update();
+        }
+
+        // Adiciona nova operação
+        function adicionarEntrada() {
+            const data = document.getElementById('data').value;
+            const resultado = document.getElementById('resultado').value;
+            const ativo = document.getElementById('ativo').value;
+            const estrategia = document.getElementById('estrategia').value;
+            const payoff = parseFloat(document.getElementById('payoff').value);
+
+            // Validações
+            if (isNaN(payoff)) {
+                alert('L/P inválido');
+                return;
+            }
+
+            if ((resultado === 'gain' && payoff <= 0) || (resultado === 'loss' && payoff >= 0)) {
+                alert('Valor não corresponde ao resultado');
+                return;
+            }
+
+            // Atualiza saldo
+            saldoAtual += payoff;
+
+            // Cria nova entrada
+            const novaEntrada = {
+                data,
+                resultado,
+                ativo,
+                estrategia,
+                payoff: payoff.toFixed(2)
+            };
+
+            // Atualiza dados
+            entradas.push(novaEntrada);
+            localStorage.setItem('entradas', JSON.stringify(entradas));
+            localStorage.setItem('saldoAtual', saldoAtual);
+
+            // Atualiza interface
+            atualizarSaldo();
+            atualizarTabela();
+            atualizarGraficos();
+            atualizarGraficoMeta();
+
+            // Limpa formulário
+            document.getElementById('ativo').value = '';
+            document.getElementById('estrategia').value = '';
+            document.getElementById('payoff').value = '';
+        }
+
+        // Deleta operação
+        function deleteEntrada(index) {
+            if (!confirm('Apagar operação?')) return;
+
+            const entrada = entradas[index];
+            saldoAtual -= parseFloat(entrada.payoff);
+            entradas.splice(index, 1);
+
+            localStorage.setItem('entradas', JSON.stringify(entradas));
+            localStorage.setItem('saldoAtual', saldoAtual);
+
+            atualizarSaldo();
+            atualizarTabela();
+            atualizarGraficos();
+            atualizarGraficoMeta();
+        }
+
+        // Atualiza saldo inicial
+        function atualizarSaldoInicial() {
+            const novoSaldo = parseFloat(document.getElementById('novoSaldoInicial').value);
+            if (isNaN(novoSaldo) || novoSaldo <= 0) {
+                alert('Saldo inicial inválido');
+                return;
+            }
+
+            saldoInicial = novoSaldo;
+            saldoAtual = saldoInicial + entradas.reduce((acc, e) => acc + parseFloat(e.payoff), 0);
+
+            localStorage.setItem('saldoInicial', saldoInicial);
+            localStorage.setItem('saldoAtual', saldoAtual);
+
+            atualizarSaldo();
+            atualizarGraficos();
+            atualizarGraficoMeta();
+        }
+
+        // Atualiza meta fixa
+        function atualizarMeta() {
+            const novaMeta = parseFloat(document.getElementById('metaFixaInput').value);
+            if (isNaN(novaMeta) || novaMeta <= 0) {
+                alert('Meta inválida');
+                return;
+            }
+
+            metaFixa = novaMeta;
+            localStorage.setItem('metaFixa', metaFixa);
+            atualizarGraficoMeta();
+        }
+
+        // Inicializa tudo
+        init();
+    </script>
+</body>
+</html>
